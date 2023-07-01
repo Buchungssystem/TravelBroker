@@ -27,6 +27,13 @@ public class TravelBroker extends Participant {
 
         TravelBroker tb = new TravelBroker();
 
+        //if button to book clicked then hotel.reserve and rentalcar.reserve with same id
+        //if hotel.abort then retalcar.timestampCleanUP
+        //if rentalCar.abort then hotel.timestampCleanUP
+        //if answer is commit from both then hotel.book and rentalcar.book
+        //now only system can crash, otherwise booking went through
+        //to capture system crash, if only one booking return AVAILABILTY/SUCCESS then clean up the other
+
             try (DatagramSocket dgSocket = new DatagramSocket(4446)) {
                 String data = "Dies ist meine erste UDP Nachricht!";
                 byte[] rawData = data.getBytes();
