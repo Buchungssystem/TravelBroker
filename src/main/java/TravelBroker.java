@@ -4,6 +4,7 @@ import org.utils.Operations;
 import java.net.DatagramPacket;
 import java.net.DatagramSocket;
 import java.time.LocalDate;
+import java.util.ArrayList;
 import java.util.UUID;
 
 public class TravelBroker extends Participant {
@@ -14,14 +15,17 @@ public class TravelBroker extends Participant {
     }
 
     @Override
-    public void book() {
-
+    public byte[] book(LocalDate localDate, LocalDate localDate1) {
+        return new byte[0];
     }
 
     @Override
-    public byte[] getAvailableItems(LocalDate localDate, LocalDate localDate1, UUID pTransaktionnumber) {
+    public ArrayList<Object> getAvailableItems(LocalDate localDate, LocalDate localDate1) {
         return null;
     }
+
+
+
 
     public static void main(String[] args) {
 

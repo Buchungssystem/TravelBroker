@@ -1,8 +1,16 @@
 import javax.swing.*;
 import java.awt.*;
+
+import com.fasterxml.jackson.databind.ObjectMapper;
 import com.toedter.calendar.JDateChooser;
+import org.utils.*;
+
+import java.net.DatagramPacket;
+import java.net.DatagramSocket;
+import java.net.InetAddress;
 import java.time.LocalDate;
 import java.time.ZoneId;
+import java.util.UUID;
 
 public class UI extends JFrame {
 
@@ -70,6 +78,22 @@ public class UI extends JFrame {
         confirmButton = new JButton("Bestätigen");
         confirmButton.setEnabled(false);
         confirmButton.addActionListener(e -> {
+            AvailabilityData data = new AvailabilityData(LocalDate.of(2023,4,2), LocalDate.of(2023,4,10));
+            ObjectMapper objectMapper = new ObjectMapper();
+            try{
+                UDPMessage x = new UDPMessage(UUID.randomUUID(), objectMapper.writeValueAsBytes(data), SendingInformation.TRAVELBROKER, Operations.AVAILIBILITY);
+                byte[] niggo = objectMapper.writeValueAsBytes(x);
+                DatagramPacket dgOut = new DatagramPacket(niggo, niggo.length, InetAddress.getLoopbackAddress(), 4445);
+                try(DatagramSocket dgSocket = new DatagramSocket(Participant.travelBrokerPort)){
+                    dgSocket.send(dgOut);
+                    System.out.println("Anfrage ist durch Mallaga");
+                }catch(Exception z){
+                    System.out.println("Am Arsch" + z.getMessage());
+                }
+            }catch(Exception l){
+                System.out.println("Halts Maul" +l.getMessage());
+            }
+
             LocalDate startDate = getSelectedDate(startDateChooser);
             LocalDate endDate = getSelectedDate(endDateChooser);
             String selectedCar = (String) carComboBox.getSelectedItem();
@@ -133,5 +157,21 @@ public class UI extends JFrame {
             UI ui = new UI();
             ui.setVisible(true);
         });
+        ObjectMapper objectMapper2 = new ObjectMapper();
+        while(true){
+            try (DatagramSocket dgSocket = new DatagramSocket(Participant.travelBrokerPort)) {
+                byte[] buffer = new byte[65507];
+                DatagramPacket dgPacket = new DatagramPacket(buffer, buffer.length);
+                System.out.println("Listening on Port "+ Participant.travelBrokerPort);
+                dgSocket.receive(dgPacket);
+                String data = new String(dgPacket.getData(), 0, dgPacket.getLength());
+                UDPMessage dataObject = objectMapper2.readValue(data, UDPMessage.class);
+                if(dataObject.getOperation()== Operations.AVAILIBILITY){
+                    System.out.println("Lets Goooooo!");
+                }
+            }catch(Exception e){}
+
+        }
     }
+
 }
