@@ -1,3 +1,4 @@
+import com.fasterxml.jackson.databind.ObjectMapper;
 import org.utils.Operations;
 import org.utils.SendingInformation;
 import org.utils.UDPMessage;
@@ -23,6 +24,8 @@ public class BrokerThread extends Thread {
 
         @Override
         public void run() {
+          /*  ObjectMapper objectMapper = new ObjectMapper();
+
             System.out.println(": Lets Goooo");
             this.id = id;
             String uiData = new String(dgPacket.getData(), 0, dgPacket.getLength());
@@ -81,9 +84,9 @@ public class BrokerThread extends Thread {
                     }
                 }
             }
-        }
+        }*/
 
-        }
+        }}
 
 
 

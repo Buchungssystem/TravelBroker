@@ -1,18 +1,24 @@
 import javax.swing.*;
+import javax.xml.crypto.Data;
 import java.awt.*;
 
+import com.fasterxml.jackson.core.type.TypeReference;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.SerializationFeature;
 import com.fasterxml.jackson.datatype.jsr310.JSR310Module;
+import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import com.toedter.calendar.JDateChooser;
 import org.utils.*;
 
 import java.net.DatagramPacket;
 import java.net.DatagramSocket;
 import java.net.InetAddress;
+import java.net.SocketTimeoutException;
 import java.time.LocalDate;
 import java.time.ZoneId;
+import java.util.ArrayList;
 import java.util.UUID;
+import java.util.concurrent.ExecutionException;
 
 public class UI extends JFrame {
 
@@ -22,7 +28,10 @@ public class UI extends JFrame {
     private JComboBox<String> roomComboBox;
     private JButton confirmButton;
 
+    private ObjectMapper objectMapper = new ObjectMapper();
+
     public UI() {
+        objectMapper.registerModule(new JavaTimeModule());
 
         setTitle("Auto- und Zimmerauswahl");
         setDefaultCloseOperation(JFrame.EXIT_ON_CLOSE);
@@ -80,28 +89,14 @@ public class UI extends JFrame {
         confirmButton = new JButton("Bestätigen");
         confirmButton.setEnabled(false);
         confirmButton.addActionListener(e -> {
-            AvailabilityData data = new AvailabilityData(LocalDate.of(2023,4,2), LocalDate.of(2023,4,10));
+            //AvailabilityData data = new AvailabilityData(LocalDate.of(2023,4,2), LocalDate.of(2023,4,10));
             ObjectMapper objectMapper = new ObjectMapper();
-            try{
-                objectMapper.registerModule(new JSR310Module());
-                objectMapper.configure(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS, false);
-                UDPMessage x = new UDPMessage(UUID.randomUUID(), objectMapper.writeValueAsBytes(data), SendingInformation.TRAVELBROKER, Operations.AVAILIBILITY);
-                byte[] niggo = objectMapper.writeValueAsBytes(x);
-                DatagramPacket dgOut = new DatagramPacket(niggo, niggo.length, InetAddress.getLoopbackAddress(), 4445);
-                try(DatagramSocket dgSocket = new DatagramSocket(6969)){
-                    dgSocket.send(dgOut);
-                    System.out.println("Anfrage ist durch Mallaga");
-                }catch(Exception z){
-                    System.out.println("Am Arsch" + z.getMessage());
-                }
-            }catch(Exception l){
-                System.out.println("Halts Maul" +l.getMessage());
-            }
 
             LocalDate startDate = getSelectedDate(startDateChooser);
             LocalDate endDate = getSelectedDate(endDateChooser);
             String selectedCar = (String) carComboBox.getSelectedItem();
             String selectedRoom = (String) roomComboBox.getSelectedItem();
+
 
             if (startDate != null && endDate != null) {
                 // Hier können Sie die ausgewählten Daten weiterverarbeiten
@@ -141,9 +136,59 @@ public class UI extends JFrame {
         LocalDate endDate = getSelectedDate(endDateChooser);
 
         if (startDate != null && endDate != null) {
-            carComboBox.setEnabled(true);
-            roomComboBox.setEnabled(true);
-            confirmButton.setEnabled(true);
+
+            AvailabilityData availabilityData = new AvailabilityData(startDate, endDate);
+
+            try(DatagramSocket dgSocket = new DatagramSocket(Participant.uiPort)){
+
+                byte[] parsedAvailability = objectMapper.writeValueAsBytes(availabilityData);
+                UDPMessage message = new UDPMessage(UUID.randomUUID(), parsedAvailability, SendingInformation.UI, Operations.AVAILIBILITY);
+
+                byte[] parsedMessage = objectMapper.writeValueAsBytes(message);
+                DatagramPacket dgOut = new DatagramPacket(parsedMessage, parsedMessage.length, Participant.localhost, Participant.travelBrokerPort);
+
+                dgSocket.send(dgOut);
+                System.out.println("send!");
+
+                byte[] buffer = new byte[65507];
+                DatagramPacket dgIn = new DatagramPacket(buffer, buffer.length);
+                for (int i = 0; i < 2; i++) {
+                    //blocking for 5 sec two times
+                    dgSocket.setSoTimeout(5000);
+                    try{
+                        dgSocket.receive(dgIn);
+                        String data = new String(dgIn.getData(), 0, dgIn.getLength());
+                        UDPMessage dataObject = objectMapper.readValue(data, UDPMessage.class);
+                        byte[] messageData = dataObject.getData();
+                        data = new String(messageData, 0, messageData.length);
+
+                        if(dataObject.getSender() == SendingInformation.RENTALCAR){
+                            ArrayList<Car> availableCars = objectMapper.readValue(data, new TypeReference<ArrayList<Car>>() {});
+
+                            System.out.println(availableCars.get(0).getBrand());
+                        } else if (dataObject.getSender() == SendingInformation.HOTEL) {
+                            ArrayList<Room> availableRooms = objectMapper.readValue(data,new TypeReference<ArrayList<Room>>() {});
+
+                            System.out.println("Da isser, der Raum: " + availableRooms.get(0).getId() + " " + availableRooms.get(0).getName());
+                            break;
+                        }
+
+                        carComboBox.setEnabled(true);
+                        roomComboBox.setEnabled(true);
+                        confirmButton.setEnabled(true);
+
+                    }catch (SocketTimeoutException ste){
+                        if(i == 1){
+                            dgSocket.send(dgOut);
+                        }else {
+                            System.out.println("Im UI anzeigen, dass Services wohl tot sind!");
+                        }
+                    }
+                }
+            }catch(Exception e){
+                System.out.println(e);
+            }
+
         } else {
             carComboBox.setEnabled(false);
             roomComboBox.setEnabled(false);
