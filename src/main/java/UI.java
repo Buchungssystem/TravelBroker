@@ -2,6 +2,8 @@ import javax.swing.*;
 import java.awt.*;
 
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.SerializationFeature;
+import com.fasterxml.jackson.datatype.jsr310.JSR310Module;
 import com.toedter.calendar.JDateChooser;
 import org.utils.*;
 
@@ -81,10 +83,12 @@ public class UI extends JFrame {
             AvailabilityData data = new AvailabilityData(LocalDate.of(2023,4,2), LocalDate.of(2023,4,10));
             ObjectMapper objectMapper = new ObjectMapper();
             try{
+                objectMapper.registerModule(new JSR310Module());
+                objectMapper.configure(SerializationFeature.WRITE_DATES_AS_TIMESTAMPS, false);
                 UDPMessage x = new UDPMessage(UUID.randomUUID(), objectMapper.writeValueAsBytes(data), SendingInformation.TRAVELBROKER, Operations.AVAILIBILITY);
                 byte[] niggo = objectMapper.writeValueAsBytes(x);
                 DatagramPacket dgOut = new DatagramPacket(niggo, niggo.length, InetAddress.getLoopbackAddress(), 4445);
-                try(DatagramSocket dgSocket = new DatagramSocket(Participant.travelBrokerPort)){
+                try(DatagramSocket dgSocket = new DatagramSocket(6969)){
                     dgSocket.send(dgOut);
                     System.out.println("Anfrage ist durch Mallaga");
                 }catch(Exception z){

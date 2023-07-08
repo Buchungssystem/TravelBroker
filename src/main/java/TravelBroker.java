@@ -9,6 +9,7 @@ import java.util.UUID;
 
 public class TravelBroker extends Participant {
 
+
     @Override
     public Operations Vote() {
         return null;
@@ -30,22 +31,33 @@ public class TravelBroker extends Participant {
     public static void main(String[] args) {
 
         TravelBroker tb = new TravelBroker();
+        //first.start();
+        //second.start();
 
-        //if button to book clicked then hotel.reserve and rentalcar.reserve with same id
-        //if hotel.abort then retalcar.timestampCleanUP
-        //if rentalCar.abort then hotel.timestampCleanUP
-        //if answer is commit from both then hotel.book and rentalcar.book
-        //now only system can crash, otherwise booking went through
-        //to capture system crash, if only one booking return AVAILABILTY/SUCCESS then clean up the other
+        while (true){
+            try (DatagramSocket dgSocket = new DatagramSocket(4445)) {
+                byte[] buffer = new byte[65507];
+                DatagramPacket dgPacket = new DatagramPacket(buffer, buffer.length);
+                System.out.println("Listening on Port 4445..");
+                if (dgSocket.receive(dgPacket)) {
+                    BrokerThread thread = new BrokerThread(dgPacket, UUID.randomUUID());
+                    thread.start();
+                }
+                //else listen weiterhin am port
+            } catch (Exception e) {
 
-            try (DatagramSocket dgSocket = new DatagramSocket(4446)) {
+            }
+
+        }
+
+           /* try (DatagramSocket dgSocket = new DatagramSocket(4446)) {
                 String data = "Dies ist meine erste UDP Nachricht!";
                 byte[] rawData = data.getBytes();
                 DatagramPacket dgPacket = new DatagramPacket(rawData, rawData.length, tb.localhost, 4445);
                 dgSocket.send(dgPacket);
             } catch (Exception e) {
 
-            }
+            }*/
 
     }
 }
