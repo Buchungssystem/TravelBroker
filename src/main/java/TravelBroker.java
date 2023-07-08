@@ -59,15 +59,22 @@ public class TravelBroker {
                     case AVAILIBILITY -> {
                         byte[] parsedMessage;
                         if (dataObject.getSender() == SendingInformation.UI) {
+                            System.out.println("an rental");
                             dataObject.setSender(SendingInformation.TRAVELBROKER);
                             parsedMessage = objectMapper.writeValueAsBytes(dataObject);
                             DatagramPacket dgOutHotel = new DatagramPacket(parsedMessage, parsedMessage.length, Participant.localhost, Participant.hotelPort);
-
+                            DatagramPacket dgOutCar = new DatagramPacket(parsedMessage, parsedMessage.length, Participant.localhost, Participant.rentalCarPort);
                             dgSocket.send(dgOutHotel);
+                            dgSocket.send(dgOutCar);
+                        } else if (dataObject.getSender() == SendingInformation.RENTALCAR) {
+                            parsedMessage = objectMapper.writeValueAsBytes(dataObject);
+                            DatagramPacket dgOutUI = new DatagramPacket(parsedMessage, parsedMessage.length, Participant.localhost, Participant.uiPort);
+                            System.out.println("wir seeeeendeeeen rental");
+                            dgSocket.send(dgOutUI);
                         } else if (dataObject.getSender() == SendingInformation.HOTEL) {
                             parsedMessage = objectMapper.writeValueAsBytes(dataObject);
                             DatagramPacket dgOutUI = new DatagramPacket(parsedMessage, parsedMessage.length, Participant.localhost, Participant.uiPort);
-                            System.out.println("wir seeeeendeeeen");
+                            System.out.println("wir seeeeendeeeen hotel");
                             dgSocket.send(dgOutUI);
                         }
                     }

@@ -30,6 +30,10 @@ public class UI extends JFrame {
 
     private ObjectMapper objectMapper = new ObjectMapper();
 
+    private Boolean carEnabled = false;
+
+    private Boolean roomEnabled = false;
+
     public UI() {
         objectMapper.registerModule(new JavaTimeModule());
 
@@ -66,7 +70,7 @@ public class UI extends JFrame {
 
         // Autoauswahl
         JLabel carLabel = new JLabel("Auto:");
-        String[] cars = {"Audi", "Mercedes", "Renault", "BMW"};
+        String[] cars = {};
         carComboBox = new JComboBox<>(cars);
         carComboBox.setEnabled(false);
         constraints.gridx = 0;
@@ -77,7 +81,7 @@ public class UI extends JFrame {
 
         // Zimmerauswahl
         JLabel roomLabel = new JLabel("Hotelzimmer:");
-        String[] rooms = {"Zimmer 1", "Zimmer 2", "Zimmer 4", "Zimmer 6"};
+        String[] rooms = {};
         roomComboBox = new JComboBox<>(rooms);
         roomComboBox.setEnabled(false);
         constraints.gridx = 0;
@@ -152,7 +156,7 @@ public class UI extends JFrame {
 
                 byte[] buffer = new byte[65507];
                 DatagramPacket dgIn = new DatagramPacket(buffer, buffer.length);
-                for (int i = 0; i < 2; i++) {
+                for (int i = 0; i < 3; i++) {
                     //blocking for 5 sec two times
                     dgSocket.setSoTimeout(5000);
                     try{
@@ -164,21 +168,27 @@ public class UI extends JFrame {
 
                         if(dataObject.getSender() == SendingInformation.RENTALCAR){
                             ArrayList<Car> availableCars = objectMapper.readValue(data, new TypeReference<ArrayList<Car>>() {});
-
-                            System.out.println(availableCars.get(0).getBrand());
+                            System.out.println("Gut diese Karre: " + availableCars.get(0).getBrand());
+                            carEnabled = true;
+                            carComboBox.removeAllItems();
+                            for(int l = 0; l < availableCars.size(); l++)
+                                carComboBox.addItem(availableCars.get(l).getBrand());
+                            carComboBox.setEnabled(true);
                         } else if (dataObject.getSender() == SendingInformation.HOTEL) {
                             ArrayList<Room> availableRooms = objectMapper.readValue(data,new TypeReference<ArrayList<Room>>() {});
-
                             System.out.println("Da isser, der Raum: " + availableRooms.get(0).getId() + " " + availableRooms.get(0).getName());
-                            break;
+                            roomEnabled = true;
+                            roomComboBox.removeAllItems();
+                            for(int n = 0; n < availableRooms.size(); n++)
+                                carComboBox.addItem(availableRooms.get(n).getName());
+                            roomComboBox.setEnabled(true);
+                        } if(carEnabled && roomEnabled){
+                            confirmButton.setEnabled(true);
                         }
 
-                        carComboBox.setEnabled(true);
-                        roomComboBox.setEnabled(true);
-                        confirmButton.setEnabled(true);
 
                     }catch (SocketTimeoutException ste){
-                        if(i == 1){
+                        if(i == 2){
                             dgSocket.send(dgOut);
                         }else {
                             System.out.println("Im UI anzeigen, dass Services wohl tot sind!");
@@ -190,9 +200,9 @@ public class UI extends JFrame {
             }
 
         } else {
-            carComboBox.setEnabled(false);
+            /*carComboBox.setEnabled(false);
             roomComboBox.setEnabled(false);
-            confirmButton.setEnabled(false);
+            confirmButton.setEnabled(false);*/
         }
     }
 
