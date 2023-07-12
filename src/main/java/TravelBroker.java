@@ -5,14 +5,18 @@ import com.fasterxml.jackson.datatype.jsr310.JavaTimeModule;
 import org.utils.*;
 import org.w3c.dom.html.HTMLOptionElement;
 
+import javax.xml.crypto.Data;
 import java.net.DatagramPacket;
 import java.net.DatagramSocket;
+import java.net.DatagramSocketImpl;
 import java.time.LocalDate;
 import java.util.*;
 
 import static com.fasterxml.jackson.databind.type.LogicalType.Map;
 
 public class TravelBroker {
+
+    private static DatagramSocket dgSocket;
     public static List<Room> availableRooms = Collections.synchronizedList(new ArrayList<Room>());
 
     List<Car> availableCars = (ArrayList<Car>) Collections.synchronizedList(new ArrayList<Car>());
@@ -41,6 +45,11 @@ public class TravelBroker {
         *
         * Once OK in 1 and 2 of arrayList -> delete entry - Transaktion finished
         * */
+        try{
+            dgSocket = new DatagramSocket(Participant.travelBrokerPort);
+        }catch (Exception e){
+            System.out.println("socket couldnt be set: " + e.getMessage());
+        }
 
         Map<UUID, ArrayList<String>> transaktionContext = new HashMap<UUID, ArrayList<String>>();
 
@@ -51,7 +60,7 @@ public class TravelBroker {
         ObjectMapper objectMapper = new ObjectMapper();
         objectMapper.registerModule(new JavaTimeModule());
         while (true) {
-            try (DatagramSocket dgSocket = new DatagramSocket(Participant.travelBrokerPort)) {
+            try{
 
                 //buffer for recieving data
                 byte[] buffer = new byte[65507];
