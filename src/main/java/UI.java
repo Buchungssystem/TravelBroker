@@ -24,8 +24,8 @@ public class UI extends JFrame {
 
     private JDateChooser startDateChooser;
     private JDateChooser endDateChooser;
-    private JComboBox<String> carComboBox;
-    private JComboBox<String> roomComboBox;
+    private JComboBox<Integer> carComboBox;
+    private JComboBox<Integer> roomComboBox;
     private JButton confirmButton;
 
     private ObjectMapper objectMapper = new ObjectMapper();
@@ -70,7 +70,7 @@ public class UI extends JFrame {
 
         // Autoauswahl
         JLabel carLabel = new JLabel("Auto:");
-        String[] cars = {};
+        Integer[] cars = {};
         carComboBox = new JComboBox<>(cars);
         carComboBox.setEnabled(false);
         constraints.gridx = 0;
@@ -81,7 +81,7 @@ public class UI extends JFrame {
 
         // Zimmerauswahl
         JLabel roomLabel = new JLabel("Hotelzimmer:");
-        String[] rooms = {};
+        Integer[] rooms = {};
         roomComboBox = new JComboBox<>(rooms);
         roomComboBox.setEnabled(false);
         constraints.gridx = 0;
@@ -94,23 +94,30 @@ public class UI extends JFrame {
         confirmButton.setEnabled(false);
         confirmButton.addActionListener(e -> {
             //AvailabilityData data = new AvailabilityData(LocalDate.of(2023,4,2), LocalDate.of(2023,4,10));
-            ObjectMapper objectMapper = new ObjectMapper();
+            byte[] parsedData;
 
             LocalDate startDate = getSelectedDate(startDateChooser);
             LocalDate endDate = getSelectedDate(endDateChooser);
-            String selectedCar = (String) carComboBox.getSelectedItem();
-            String selectedRoom = (String) roomComboBox.getSelectedItem();
+            int selectedCar = (int) carComboBox.getSelectedItem();
+            int selectedRoom = (int) roomComboBox.getSelectedItem();
 
+            System.out.println(selectedRoom);
 
-            if (startDate != null && endDate != null) {
-                // Hier können Sie die ausgewählten Daten weiterverarbeiten
-                System.out.println("Startdatum: " + startDate);
-                System.out.println("Enddatum: " + endDate);
-                System.out.println("Ausgewähltes Auto: " + selectedCar);
-                System.out.println("Ausgewähltes Zimmer: " + selectedRoom);
-            } else {
-                JOptionPane.showMessageDialog(UI.this, "Bitte wählen Sie ein Startdatum und ein Enddatum aus.");
+            //store data in wrapperclass to send it better
+            BookingData bookingData = new BookingData(startDate, endDate, selectedCar, selectedRoom);
+            try(DatagramSocket dgSocket = new DatagramSocket(Participant.uiPort)){
+            parsedData = objectMapper.writeValueAsBytes(bookingData);
+            UDPMessage message = new UDPMessage(UUID.randomUUID(), parsedData, SendingInformation.UI, Operations.PREPARE);
+            parsedData = objectMapper.writeValueAsBytes(message);
+
+            DatagramPacket dgOut = new DatagramPacket(parsedData, parsedData.length, Participant.localhost, Participant.travelBrokerPort);
+
+            dgSocket.send(dgOut);
+
+            }catch (Exception ex){
+                System.out.println("alles am arsch: " + ex);
             }
+
         });
         constraints.gridx = 1;
         constraints.gridy = 4;
@@ -141,12 +148,12 @@ public class UI extends JFrame {
 
         if (startDate != null && endDate != null) {
 
-            AvailabilityData availabilityData = new AvailabilityData(startDate, endDate);
+            AvailabilityData availabilityData = new AvailabilityData(startDate, endDate, false, false);
 
             try(DatagramSocket dgSocket = new DatagramSocket(Participant.uiPort)){
-
+                UUID randomUUID = UUID.randomUUID();
                 byte[] parsedAvailability = objectMapper.writeValueAsBytes(availabilityData);
-                UDPMessage message = new UDPMessage(UUID.randomUUID(), parsedAvailability, SendingInformation.UI, Operations.AVAILIBILITY);
+                UDPMessage message = new UDPMessage(randomUUID, parsedAvailability, SendingInformation.UI, Operations.AVAILIBILITY);
 
                 byte[] parsedMessage = objectMapper.writeValueAsBytes(message);
                 DatagramPacket dgOut = new DatagramPacket(parsedMessage, parsedMessage.length, Participant.localhost, Participant.travelBrokerPort);
@@ -156,7 +163,7 @@ public class UI extends JFrame {
 
                 byte[] buffer = new byte[65507];
                 DatagramPacket dgIn = new DatagramPacket(buffer, buffer.length);
-                for (int i = 0; i < 3; i++) {
+                for (int i = 0; i < 4; i++) {
                     //blocking for 5 sec two times
                     dgSocket.setSoTimeout(5000);
                     try{
@@ -170,9 +177,10 @@ public class UI extends JFrame {
                             ArrayList<Car> availableCars = objectMapper.readValue(data, new TypeReference<ArrayList<Car>>() {});
                             System.out.println("Gut diese Karre: " + availableCars.get(0).getBrand());
                             carEnabled = true;
+                            System.out.println("is doch da: " + carEnabled);
                             carComboBox.removeAllItems();
                             for(int l = 0; l < availableCars.size(); l++)
-                                carComboBox.addItem(availableCars.get(l).getBrand());
+                                carComboBox.addItem(availableCars.get(l).getId());
                             carComboBox.setEnabled(true);
                         } else if (dataObject.getSender() == SendingInformation.HOTEL) {
                             ArrayList<Room> availableRooms = objectMapper.readValue(data,new TypeReference<ArrayList<Room>>() {});
@@ -180,16 +188,32 @@ public class UI extends JFrame {
                             roomEnabled = true;
                             roomComboBox.removeAllItems();
                             for(int n = 0; n < availableRooms.size(); n++)
-                                carComboBox.addItem(availableRooms.get(n).getName());
+                                roomComboBox.addItem(availableRooms.get(n).getId());
                             roomComboBox.setEnabled(true);
-                        } if(carEnabled && roomEnabled){
+                        }if(carEnabled && roomEnabled){
                             confirmButton.setEnabled(true);
+                            break;
                         }
 
 
                     }catch (SocketTimeoutException ste){
-                        if(i == 2){
-                            dgSocket.send(dgOut);
+                        AvailabilityData availabilityResend = null;
+                        if(i < 3){
+                            if(!carEnabled && !roomEnabled){
+                                dgSocket.send(dgOut);
+                            }else {
+                                if(!carEnabled){
+                                    availabilityResend = new AvailabilityData(startDate, endDate, false, true);
+                                }
+                                if (!roomEnabled){
+                                    availabilityResend = new AvailabilityData(startDate, endDate, true, false);
+                                }
+                                parsedAvailability = objectMapper.writeValueAsBytes(availabilityResend);
+                                message = new UDPMessage(randomUUID, parsedAvailability, SendingInformation.UI, Operations.AVAILIBILITY);
+                                parsedMessage = objectMapper.writeValueAsBytes(message);
+                                DatagramPacket dgResend = new DatagramPacket(parsedMessage, parsedMessage.length, Participant.localhost, Participant.travelBrokerPort);
+                                dgSocket.send(dgResend);
+                            }
                         }else {
                             System.out.println("Im UI anzeigen, dass Services wohl tot sind!");
                         }
