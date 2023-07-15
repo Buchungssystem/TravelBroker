@@ -6,6 +6,7 @@ import org.utils.*;
 import org.w3c.dom.html.HTMLOptionElement;
 
 import javax.xml.crypto.Data;
+import java.io.File;
 import java.io.Serializable;
 import java.net.DatagramPacket;
 import java.net.DatagramSocket;
@@ -61,6 +62,76 @@ public class TravelBroker {
 
         ObjectMapper objectMapper = new ObjectMapper();
         objectMapper.registerModule(new JavaTimeModule());
+
+        //recovery from crash
+
+        //check if logs are empty since we wouldn't need to recover if there are no logs
+        if(logWriter.isLogsNotEmpty()){
+            File dir = new File(logWriter.getDirectory());
+            File[] files = dir.listFiles();
+
+            //loop through all files of logs directory
+            for(File currentContextFile : files){
+                //write context back to contextMap
+                UUID transactionId = UUID.fromString(currentContextFile.getName());
+                transactionContext = logWriter.readLogFile(transactionId);
+                transactionContextMap.put(transactionId, transactionContext);
+
+                LOGGER.log(Level.INFO, "Transaction Context with the ID: " + transactionId + "was restored");
+            }
+
+            byte[] parsedResponse = null;
+
+            //loop through context map and react accordingly
+            for(Map.Entry<UUID, TransactionContext> entry : transactionContextMap.entrySet()){
+                switch(entry.getValue().getCurrentState()){
+                    case READY -> {
+                        TransactionContext currContext = entry.getValue();
+                        if(!currContext.isCarFlag()){
+                            //send decision to Car since we couldn't send it before the crash
+
+                            UDPMessage carResponse = new UDPMessage(entry.getKey(), new byte[0], SendingInformation.TRAVELBROKER, Operations.COMMIT, myPort);
+                            try {
+                                parsedResponse = objectMapper.writeValueAsBytes(carResponse);
+                                DatagramPacket dpCar = new DatagramPacket(parsedResponse, parsedResponse.length, Participant.localhost, Participant.rentalCarPort);
+
+                                dgSocket.send(dpCar);
+                                LOGGER.log(Level.INFO, "Send the decission Commit to RentalCar");
+
+                                boolean hotelFlag = currContext.isHotelFlag();
+
+                                transactionContext = new TransactionContext(States.READY, true, hotelFlag);
+                                logWriter.write(entry.getKey(), transactionContext);
+                                transactionContextMap.put(entry.getKey(), transactionContext);
+                            }catch(Exception e){
+                                LOGGER.log(Level.SEVERE, "There was an error with sending the decision", e);
+                            }
+                        } else if (!currContext.isHotelFlag()) {
+                            //send decision to Hotel since we couldn't send it before the crash
+
+                            UDPMessage hotelResponse = new UDPMessage(entry.getKey(), new byte[0], SendingInformation.TRAVELBROKER, Operations.COMMIT, myPort);
+                            try {
+                                parsedResponse = objectMapper.writeValueAsBytes(hotelResponse);
+                                DatagramPacket dpHotel = new DatagramPacket(parsedResponse, parsedResponse.length, Participant.localhost, Participant.rentalCarPort);
+
+                                dgSocket.send(dpHotel);
+                                LOGGER.log(Level.INFO, "Send the decission Commit to Hotel");
+
+                                boolean hotelFlag = currContext.isHotelFlag();
+
+                                transactionContext = new TransactionContext(States.READY, true, hotelFlag);
+                                logWriter.write(entry.getKey(), transactionContext);
+                                transactionContextMap.put(entry.getKey(), transactionContext);
+                            }catch(Exception e){
+                                LOGGER.log(Level.SEVERE, "There was an error with sending the decision", e);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+
         while (true) {
             try{
                 //buffer for receiving data
@@ -90,6 +161,7 @@ public class TravelBroker {
 
                             //set SendingInformation to TravelBroker cause it just gets forwarded to the participants from here
                             dataObject.setSender(SendingInformation.TRAVELBROKER);
+                            dataObject.setOriginPort(myPort);
 
                             parsedMessage = objectMapper.writeValueAsBytes(dataObject);
                             DatagramPacket dgOutHotel = new DatagramPacket(parsedMessage, parsedMessage.length, Participant.localhost, Participant.hotelPort);
@@ -134,13 +206,13 @@ public class TravelBroker {
                         }
                     }
                     case READY -> {
-                        LOGGER.log(Level.INFO, "2PC: Ready - " + transactionId);
 
                         TransactionContext currContext;
                         currContext = transactionContextMap.get(transactionId);
                         //check which participant answered with ready and set corresponding context and boolean
                         if(dataObject.getSender() == SendingInformation.HOTEL){
-                            if(currContext.isCarReceived()){
+                            LOGGER.log(Level.INFO, "2PC: Ready from hotel - " + transactionId);
+                            if(currContext.isCarFlag()){
                                 // since car received and we are in the hotelReceived-block both sent ready
                                 transactionContext = new TransactionContext(States.READY, true, true);
                             }else {
@@ -151,7 +223,8 @@ public class TravelBroker {
                             transactionContextMap.put(transactionId, transactionContext);
 
                         } else if (dataObject.getSender() == SendingInformation.RENTALCAR) {
-                            if(currContext.isHotelReceived()){
+                            LOGGER.log(Level.INFO, "2PC: Ready from RentalCar - " + transactionId);
+                            if(currContext.isHotelFlag()){
                                 // since hotel received and we are in the carReceived-block both sent ready
                                 transactionContext = new TransactionContext(States.READY, true, true);
                             }else {
@@ -166,7 +239,7 @@ public class TravelBroker {
                         //get context of transactionId and check if both sent ready
                         currContext = transactionContextMap.get(transactionId);
 
-                        if(currContext.isCarReceived() && currContext.isHotelReceived()){
+                        if(currContext.isCarFlag() && currContext.isHotelFlag()){
                             LOGGER.log(Level.INFO, "2PC: Global Commit - " + transactionId);
                             //send global commit since both answered ready
                             UDPMessage hotelResponse;
@@ -192,26 +265,37 @@ public class TravelBroker {
 
                             //send global commit
                             dgSocket.send(dgOutHotelReady);
+                            //store that we send globalCommit to Hotel
+                            transactionContext = new TransactionContext(States.GLOBALCOMMIT, false, true);
+                            logWriter.write(transactionId, transactionContext);
+                            transactionContextMap.put(transactionId, transactionContext);
+
                             dgSocket.send(dgOutCarReady);
+                            //store that we send globalCommit to RentalCar
+                            transactionContext = new TransactionContext(States.GLOBALCOMMIT, false, false);
+                            logWriter.write(transactionId, transactionContext);
+                            transactionContextMap.put(transactionId, transactionContext);
                         }
 
                     }
                     case OK -> {
-                        LOGGER.log(Level.INFO, "2PC: Ok - " + transactionId);
                         TransactionContext currContext;
                         UUID transaktionId = dataObject.getTransaktionNumber();
                         if(dataObject.getSender() == SendingInformation.HOTEL){
+                            LOGGER.log(Level.INFO, "2PC: Ok from Hotel - " + transactionId);
                             currContext = transactionContextMap.get(transaktionId);
-                            if(currContext.isCarReceived()){
-                                //since car already received both get set to true
-                                transactionContext = new TransactionContext(States.OK, true, true);
+                            if(currContext.isCarFlag()){
+                                //since Car is already received the LogFile gets deleted
+                                logWriter.delete(transactionId);
                             }else{
                                 transactionContext = new TransactionContext(States.OK, false, true);
                             }
                         } else if (dataObject.getSender() == SendingInformation.RENTALCAR) {
+                            LOGGER.log(Level.INFO, "2PC: Ok from RentalCar - " + transactionId);
                             currContext = transactionContextMap.get(transaktionId);
-                            if(currContext.isHotelReceived()){
-                                transactionContext = new TransactionContext(States.OK, true, true);
+                            if(currContext.isHotelFlag()){
+                                //since Hotel is already received the LogFile gets deleted
+                                logWriter.delete(transactionId);
                             }else {
                                 transactionContext = new TransactionContext(States.OK, true, false);
                             }
@@ -220,7 +304,7 @@ public class TravelBroker {
                         //get current Context to validate if both sent OK
                         currContext = transactionContextMap.get(transaktionId);
 
-                        if(currContext.isHotelReceived() && currContext.isCarReceived()){
+                        if(currContext.isHotelFlag() && currContext.isCarFlag()){
                             //remove entry from local transactionContext
                             transactionContextMap.remove(transaktionId);
                             //remove persistent logfile
@@ -229,7 +313,6 @@ public class TravelBroker {
                         }
                     }
                     case AVAILIBILITY -> {
-                        LOGGER.log(Level.INFO, "Availability: request from UI");
                         //since we always get a availability request from the ui first we store the ui port here if not already set
                         if(uiPort == 0){
                             uiPort = dataObject.getOriginPort();
@@ -237,6 +320,7 @@ public class TravelBroker {
 
                         //check if request comes from the UI
                         if (dataObject.getSender() == SendingInformation.UI) {
+                            LOGGER.log(Level.INFO, "Availability: request from UI");
                             //set port to the port of travelBroker instance so that the service knows who to respond
                             dataObject.setOriginPort(myPort);
 
@@ -253,7 +337,6 @@ public class TravelBroker {
                                 dgSocket.send(dgOutHotel);
                             }
                             if(!availabilityData.isSendRentalCar()){
-                                System.out.println("wtf");
                                 DatagramPacket dgOutCar = new DatagramPacket(parsedMessage, parsedMessage.length, Participant.localhost, Participant.rentalCarPort);
                                 dgSocket.send(dgOutCar);
                             }
