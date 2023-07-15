@@ -19,6 +19,8 @@ import java.time.ZoneId;
 import java.util.ArrayList;
 import java.util.UUID;
 import java.util.concurrent.ExecutionException;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 
 public class UI extends JFrame {
 
@@ -34,7 +36,34 @@ public class UI extends JFrame {
 
     private Boolean roomEnabled = false;
 
-    public UI() {
+    private int myPort;
+
+    private int travelBrokerPort;
+
+    private final static Logger LOGGER = Logger.getLogger(UI.class.getName());
+
+    public UI(int travelBrokerPort) {
+        int[] possiblePorts = {5000, 5001, 5002, 5003, 5004};
+        boolean portSet = false;
+        for (int i = 0; i < possiblePorts.length; i++){
+            try{
+                myPort = possiblePorts[i];
+                LOGGER.log(Level.INFO, "UI Port now set on: " + possiblePorts[i]);
+                portSet = true;
+                break;
+            }catch(Exception e){
+                LOGGER.log(Level.INFO, "Port " + possiblePorts[i] + "already taken, trying next!");
+            }
+        }
+
+        if(!portSet){
+            LOGGER.log(Level.SEVERE, "UI didn't find any open Port! Program will now shut down.");
+            System.exit(0);
+        }
+
+        //store the port of corresponding travelBroker instance
+        this.travelBrokerPort = travelBrokerPort;
+
         objectMapper.registerModule(new JavaTimeModule());
 
         setTitle("Auto- und Zimmerauswahl");
@@ -107,10 +136,10 @@ public class UI extends JFrame {
             BookingData bookingData = new BookingData(startDate, endDate, selectedCar, selectedRoom);
             try(DatagramSocket dgSocket = new DatagramSocket(Participant.uiPort)){
             parsedData = objectMapper.writeValueAsBytes(bookingData);
-            UDPMessage message = new UDPMessage(UUID.randomUUID(), parsedData, SendingInformation.UI, Operations.PREPARE);
+            UDPMessage message = new UDPMessage(UUID.randomUUID(), parsedData, SendingInformation.UI, Operations.PREPARE, Participant.uiPort);
             parsedData = objectMapper.writeValueAsBytes(message);
 
-            DatagramPacket dgOut = new DatagramPacket(parsedData, parsedData.length, Participant.localhost, Participant.travelBrokerPort);
+            DatagramPacket dgOut = new DatagramPacket(parsedData, parsedData.length, Participant.localhost, travelBrokerPort);
 
             dgSocket.send(dgOut);
 
@@ -153,10 +182,10 @@ public class UI extends JFrame {
             try(DatagramSocket dgSocket = new DatagramSocket(Participant.uiPort)){
                 UUID randomUUID = UUID.randomUUID();
                 byte[] parsedAvailability = objectMapper.writeValueAsBytes(availabilityData);
-                UDPMessage message = new UDPMessage(randomUUID, parsedAvailability, SendingInformation.UI, Operations.AVAILIBILITY);
+                UDPMessage message = new UDPMessage(randomUUID, parsedAvailability, SendingInformation.UI, Operations.AVAILIBILITY, Participant.uiPort);
 
                 byte[] parsedMessage = objectMapper.writeValueAsBytes(message);
-                DatagramPacket dgOut = new DatagramPacket(parsedMessage, parsedMessage.length, Participant.localhost, Participant.travelBrokerPort);
+                DatagramPacket dgOut = new DatagramPacket(parsedMessage, parsedMessage.length, Participant.localhost, travelBrokerPort);
 
                 dgSocket.send(dgOut);
                 System.out.println("send!");
@@ -209,9 +238,9 @@ public class UI extends JFrame {
                                     availabilityResend = new AvailabilityData(startDate, endDate, true, false);
                                 }
                                 parsedAvailability = objectMapper.writeValueAsBytes(availabilityResend);
-                                message = new UDPMessage(randomUUID, parsedAvailability, SendingInformation.UI, Operations.AVAILIBILITY);
+                                message = new UDPMessage(randomUUID, parsedAvailability, SendingInformation.UI, Operations.AVAILIBILITY, Participant.uiPort);
                                 parsedMessage = objectMapper.writeValueAsBytes(message);
-                                DatagramPacket dgResend = new DatagramPacket(parsedMessage, parsedMessage.length, Participant.localhost, Participant.travelBrokerPort);
+                                DatagramPacket dgResend = new DatagramPacket(parsedMessage, parsedMessage.length, Participant.localhost, travelBrokerPort);
                                 dgSocket.send(dgResend);
                             }
                         }else {
@@ -236,13 +265,13 @@ public class UI extends JFrame {
     }
 
     public static void main(String[] args) {
-        SwingUtilities.invokeLater(() -> {
+        /*SwingUtilities.invokeLater(() -> {
             UI ui = new UI();
             ui.setVisible(true);
         });
         ObjectMapper objectMapper2 = new ObjectMapper();
         while(true){
-            try (DatagramSocket dgSocket = new DatagramSocket(Participant.travelBrokerPort)) {
+            try (DatagramSocket dgSocket = new DatagramSocket(travelBrokerPort)) {
                 byte[] buffer = new byte[65507];
                 DatagramPacket dgPacket = new DatagramPacket(buffer, buffer.length);
                 System.out.println("Listening on Port "+ Participant.travelBrokerPort);
@@ -254,7 +283,7 @@ public class UI extends JFrame {
                 }
             }catch(Exception e){}
 
-        }
+        }*/
     }
 
 }

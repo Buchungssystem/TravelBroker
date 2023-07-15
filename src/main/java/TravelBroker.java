@@ -6,69 +6,71 @@ import org.utils.*;
 import org.w3c.dom.html.HTMLOptionElement;
 
 import javax.xml.crypto.Data;
+import java.io.Serializable;
 import java.net.DatagramPacket;
 import java.net.DatagramSocket;
 import java.net.DatagramSocketImpl;
 import java.time.LocalDate;
 import java.util.*;
+import java.util.logging.Level;
+import java.util.logging.Logger;
 
 import static com.fasterxml.jackson.databind.type.LogicalType.Map;
+
 
 public class TravelBroker {
 
     private static DatagramSocket dgSocket;
-    public static List<Room> availableRooms = Collections.synchronizedList(new ArrayList<Room>());
 
-    List<Car> availableCars = (ArrayList<Car>) Collections.synchronizedList(new ArrayList<Car>());
+    private final static Logger LOGGER = Logger.getLogger(TravelBroker.class.getName());
 
-    public static void getAvailableItems(int i) {
+    private static TransactionContext transactionContext;
 
-    }
+    private static Map<UUID, TransactionContext> transactionContextMap = new HashMap<>();
 
+    private static LogWriter<TransactionContext> logWriter = new LogWriter<>();
 
-    public void prepare() {
+    //port of the current TravelBroker instance
+    private static int myPort;
 
-    }
-
+    //port of the corresponding ui instance
+    private static int uiPort = 0;
 
 
     public static void main(String[] args) {
-
-        //Transaktion Id Context:
-        /* stores TransaktionID as Key with arrayList as value
-        * arrayList contains always 3 fields: 0: Statement, 1: Car Recieved?, 2: Room Recieved?
-        * 1, 2: '' for no answer || COMMIT or ABORT as answer
-        *
-        *
-        * if global Commit or Abort set Statement to Commit or Abort
-        * waiting for every P to send back OK
-        *
-        * Once OK in 1 and 2 of arrayList -> delete entry - Transaktion finished
-        * */
-        try{
-            dgSocket = new DatagramSocket(Participant.travelBrokerPort);
-        }catch (Exception e){
-            System.out.println("socket couldnt be set: " + e.getMessage());
+        int[] possiblePorts = {4442, 4443, 4444, 4445, 4446};
+        boolean portSet = false;
+        for (int i = 0; i < possiblePorts.length; i++){
+            try{
+                dgSocket = new DatagramSocket(possiblePorts[i]);
+                myPort = possiblePorts[i];
+                portSet = true;
+                break;
+            }catch(Exception e){
+                LOGGER.log(Level.INFO, "Port " + possiblePorts[i] + "already taken, trying next!");
+            }
         }
 
-        Map<UUID, ArrayList<String>> transaktionContext = new HashMap<UUID, ArrayList<String>>();
+        if(!portSet){
+            LOGGER.log(Level.SEVERE, "TravelBroker didn't find any open Port! Program will now shut down.");
+            System.exit(0);
+        }
 
-
-        ThreadUI t = new ThreadUI();
+        ThreadUI t = new ThreadUI(myPort);
         t.start();
 
         ObjectMapper objectMapper = new ObjectMapper();
         objectMapper.registerModule(new JavaTimeModule());
         while (true) {
             try{
-
-                //buffer for recieving data
+                //buffer for receiving data
                 byte[] buffer = new byte[65507];
-                //DatagramPacket for recieving data
-                DatagramPacket dgPacketIn = new DatagramPacket(buffer, buffer.length);
-                System.out.println("Listening on Port " + Participant.travelBrokerPort);
 
-                //recieving and parsing UDP Message
+                //DatagramPacket for receiving data
+                DatagramPacket dgPacketIn = new DatagramPacket(buffer, buffer.length);
+                LOGGER.log(Level.INFO, "TravelBroker listening on Port: " + myPort);
+
+                //receiving and parsing UDP Message
                 dgSocket.receive(dgPacketIn);
                 String data = new String(dgPacketIn.getData(), 0, dgPacketIn.getLength());
                 UDPMessage dataObject = objectMapper.readValue(data, UDPMessage.class);
@@ -76,81 +78,111 @@ public class TravelBroker {
                 //parsed Message for sending data
                 byte[] parsedMessage;
 
+                //store TransaktionID for context on further processing
+                UUID transactionId = dataObject.getTransaktionNumber();
 
-
+                //decide what to do next for 2PC based on sent operation
                 switch (dataObject.getOperation()) {
                     case PREPARE -> {
-                        System.out.println("prepare send!");
+                        //check if the Request came from the UI
                         if (dataObject.getSender() == SendingInformation.UI) {
-                            dataObject.setSender(SendingInformation.TRAVELBROKER);
+                            LOGGER.log(Level.INFO, "2PC: Prepare - " + transactionId);
 
-                            //store TransaktionID for context on further processing
-                            UUID transaktionId = dataObject.getTransaktionNumber();
-                            transaktionContext.put(transaktionId, new ArrayList<>());
-                            // at arrayList(0): Statement
-                            transaktionContext.get(transaktionId).add(Operations.PREPARE.toString());
-                            // no Car response yet
-                            transaktionContext.get(transaktionId).add("");
-                            // no Room response yet
-                            transaktionContext.get(transaktionId).add("");
+                            //set SendingInformation to TravelBroker cause it just gets forwarded to the participants from here
+                            dataObject.setSender(SendingInformation.TRAVELBROKER);
 
                             parsedMessage = objectMapper.writeValueAsBytes(dataObject);
                             DatagramPacket dgOutHotel = new DatagramPacket(parsedMessage, parsedMessage.length, Participant.localhost, Participant.hotelPort);
                             DatagramPacket dgOutCar = new DatagramPacket(parsedMessage, parsedMessage.length, Participant.localhost, Participant.rentalCarPort);
+                            //send Prepare with bookingData to hotel and rentalCar
                             dgSocket.send(dgOutHotel);
                             dgSocket.send(dgOutCar);
+
+                            transactionContext = new TransactionContext(States.PREPARE, false, false);
+                            logWriter.write(transactionId, transactionContext);
+                            transactionContextMap.put(transactionId, transactionContext);
                         }else {
-                            System.out.println("Die Atze kenn ich nich!");
+                            LOGGER.log(Level.SEVERE, "Sender wasn't authenticated");
                         }
 
                     }
                     case ABORT -> {
-
-                        UUID transaktionNumber = dataObject.getTransaktionNumber();
-                        transaktionContext.get(transaktionNumber).set(0, Operations.ABORT.toString());
+                        LOGGER.log(Level.INFO, "2PC: Abort - " + transactionId);
 
                         if(dataObject.getSender() == SendingInformation.HOTEL){
-                            System.out.println("abort recieved - hotel");
-                            UDPMessage carResponse = new UDPMessage(transaktionNumber, new byte[0], SendingInformation.TRAVELBROKER, Operations.ABORT);
+                            //if Abort from hotel is received we can already send a abort to rental car, since the coordinator would decide to
+                            //send a global abort anyways. This way its faster.
+                            UDPMessage carResponse = new UDPMessage(transactionId, new byte[0], SendingInformation.TRAVELBROKER, Operations.ABORT, myPort);
                             byte[] parsedCarResponse = objectMapper.writeValueAsBytes(carResponse);
                             DatagramPacket dgOutCarAbort = new DatagramPacket(parsedCarResponse, parsedCarResponse.length, Participant.localhost, Participant.rentalCarPort);
 
                             dgSocket.send(dgOutCarAbort);
+                            transactionContext = new TransactionContext(States.ABORT, false, true);
+                            logWriter.write(transactionId, transactionContext);
+                            transactionContextMap.put(transactionId, transactionContext);
                         }else if (dataObject.getSender() == SendingInformation.RENTALCAR){
-                            System.out.println("abort recieved - RentalCar");
-                            UDPMessage hotelResponse = new UDPMessage(transaktionNumber, new byte[0], SendingInformation.TRAVELBROKER, Operations.ABORT);
+                            //if Abort from rentalCar is received we can already send a abort to Hotel, since the coordinator would decide to
+                            //send a global abort anyways. This way its faster.
+                            UDPMessage hotelResponse = new UDPMessage(transactionId, new byte[0], SendingInformation.TRAVELBROKER, Operations.ABORT, myPort);
                             byte[] parsedHotelResponse = objectMapper.writeValueAsBytes(hotelResponse);
                             DatagramPacket dgOutHotelAbort = new DatagramPacket(parsedHotelResponse, parsedHotelResponse.length, Participant.localhost, Participant.hotelPort);
 
                             dgSocket.send(dgOutHotelAbort);
+                            transactionContext = new TransactionContext(States.ABORT, true, false);
+                            logWriter.write(transactionId, transactionContext);
+                            transactionContextMap.put(transactionId, transactionContext);
                         }
                     }
                     case READY -> {
-                        UUID transaktionNumber = dataObject.getTransaktionNumber();
+                        LOGGER.log(Level.INFO, "2PC: Ready - " + transactionId);
+
+                        TransactionContext currContext;
+                        currContext = transactionContextMap.get(transactionId);
+                        //check which participant answered with ready and set corresponding context and boolean
                         if(dataObject.getSender() == SendingInformation.HOTEL){
-                            System.out.println("Hotel Ready recieved");
-                            transaktionContext.get(transaktionNumber).set(2, Operations.READY.toString());
+                            if(currContext.isCarReceived()){
+                                // since car received and we are in the hotelReceived-block both sent ready
+                                transactionContext = new TransactionContext(States.READY, true, true);
+                            }else {
+                                // only car is ready
+                                transactionContext = new TransactionContext(States.READY, false, true);
+                            }
+                            logWriter.write(transactionId, transactionContext);
+                            transactionContextMap.put(transactionId, transactionContext);
+
                         } else if (dataObject.getSender() == SendingInformation.RENTALCAR) {
-                            System.out.println("RentalCar Ready recieved");
-                            transaktionContext.get(transaktionNumber).set(1, Operations.READY.toString());
+                            if(currContext.isHotelReceived()){
+                                // since hotel received and we are in the carReceived-block both sent ready
+                                transactionContext = new TransactionContext(States.READY, true, true);
+                            }else {
+                                // only hotel is ready
+                                transactionContext = new TransactionContext(States.READY, true, false);
+                            }
+                            logWriter.write(transactionId, transactionContext);
+                            transactionContextMap.put(transactionId, transactionContext);
                         }
 
-                        String carTransaktionContext = transaktionContext.get(transaktionNumber).get(1);
-                        String hotelTransaktionContext = transaktionContext.get(transaktionNumber).get(2);
-                        UDPMessage hotelResponse;
-                        UDPMessage carResponse;
-                        byte[] parsedHotelResponse;
-                        byte[] parsedCarResponse;
-                        DatagramPacket dgOutHotelReady;
-                        DatagramPacket dgOutCarReady;
 
-                        if(carTransaktionContext.equals(Operations.READY.toString()) && hotelTransaktionContext.equals(Operations.READY.toString())){
-                            System.out.println("jetzt gehts schon voll rein in den Global Commit");
-                            //global Commit
-                            transaktionContext.get(transaktionNumber).set(0, Operations.COMMIT.toString());
+                        //get context of transactionId and check if both sent ready
+                        currContext = transactionContextMap.get(transactionId);
 
-                            hotelResponse = new UDPMessage(transaktionNumber, new byte[0], SendingInformation.TRAVELBROKER, Operations.COMMIT);
-                            carResponse = new UDPMessage(transaktionNumber, new byte[0], SendingInformation.TRAVELBROKER, Operations.COMMIT);
+                        if(currContext.isCarReceived() && currContext.isHotelReceived()){
+                            LOGGER.log(Level.INFO, "2PC: Global Commit - " + transactionId);
+                            //send global commit since both answered ready
+                            UDPMessage hotelResponse;
+                            UDPMessage carResponse;
+                            byte[] parsedHotelResponse;
+                            byte[] parsedCarResponse;
+                            DatagramPacket dgOutHotelReady;
+                            DatagramPacket dgOutCarReady;
+
+                            //set context to global commit
+                            transactionContext = new TransactionContext(States.GLOBALCOMMIT, false, false);
+                            logWriter.write(transactionId, transactionContext);
+                            transactionContextMap.put(transactionId, transactionContext);
+
+                            hotelResponse = new UDPMessage(transactionId, new byte[0], SendingInformation.TRAVELBROKER, Operations.COMMIT, myPort);
+                            carResponse = new UDPMessage(transactionId, new byte[0], SendingInformation.TRAVELBROKER, Operations.COMMIT, myPort);
 
                             parsedHotelResponse = objectMapper.writeValueAsBytes(hotelResponse);
                             parsedCarResponse = objectMapper.writeValueAsBytes(carResponse);
@@ -158,36 +190,64 @@ public class TravelBroker {
                             dgOutHotelReady = new DatagramPacket(parsedHotelResponse, parsedHotelResponse.length, Participant.localhost, Participant.hotelPort);
                             dgOutCarReady = new DatagramPacket(parsedCarResponse, parsedCarResponse.length, Participant.localhost, Participant.rentalCarPort);
 
-                            System.out.println("sending global commit hotel..");
+                            //send global commit
                             dgSocket.send(dgOutHotelReady);
-                            System.out.println(dgOutHotelReady.getPort());
-                            System.out.println("sending global commit Car..");
                             dgSocket.send(dgOutCarReady);
                         }
 
                     }
                     case OK -> {
-                        UUID transaktionNumber = dataObject.getTransaktionNumber();
+                        LOGGER.log(Level.INFO, "2PC: Ok - " + transactionId);
+                        TransactionContext currContext;
+                        UUID transaktionId = dataObject.getTransaktionNumber();
                         if(dataObject.getSender() == SendingInformation.HOTEL){
-                            System.out.println("okay hotel");
-                            transaktionContext.get(transaktionNumber).set(2, Operations.OK.toString());
+                            currContext = transactionContextMap.get(transaktionId);
+                            if(currContext.isCarReceived()){
+                                //since car already received both get set to true
+                                transactionContext = new TransactionContext(States.OK, true, true);
+                            }else{
+                                transactionContext = new TransactionContext(States.OK, false, true);
+                            }
                         } else if (dataObject.getSender() == SendingInformation.RENTALCAR) {
-                            System.out.println("okay RentalCar");
-                            transaktionContext.get(transaktionNumber).set(1, Operations.OK.toString());
+                            currContext = transactionContextMap.get(transaktionId);
+                            if(currContext.isHotelReceived()){
+                                transactionContext = new TransactionContext(States.OK, true, true);
+                            }else {
+                                transactionContext = new TransactionContext(States.OK, true, false);
+                            }
                         }
-                        String contextCar = transaktionContext.get(transaktionNumber).get(1);
-                        String contextRoom = transaktionContext.get(transaktionNumber).get(2);
-                        if(contextRoom.equals(Operations.OK.toString()) && contextCar.equals(Operations.OK.toString())){
-                            transaktionContext.remove(transaktionNumber);
-                            System.out.println("Wie geil ist das denn bitte?!");
+
+                        //get current Context to validate if both sent OK
+                        currContext = transactionContextMap.get(transaktionId);
+
+                        if(currContext.isHotelReceived() && currContext.isCarReceived()){
+                            //remove entry from local transactionContext
+                            transactionContextMap.remove(transaktionId);
+                            //remove persistent logfile
+                            logWriter.delete(transaktionId);
+                            LOGGER.log(Level.INFO, "2PC: completed - Booked successfully and deleted corresponding transaction context! - " + transactionId);
                         }
                     }
                     case AVAILIBILITY -> {
+                        LOGGER.log(Level.INFO, "Availability: request from UI");
+                        //since we always get a availability request from the ui first we store the ui port here if not already set
+                        if(uiPort == 0){
+                            uiPort = dataObject.getOriginPort();
+                        }
+
+                        //check if request comes from the UI
                         if (dataObject.getSender() == SendingInformation.UI) {
+                            //set port to the port of travelBroker instance so that the service knows who to respond
+                            dataObject.setOriginPort(myPort);
+
+                            //retrieve availability data such as startDate and endDate of the availability request and who to send to the request
                             AvailabilityData availabilityData = objectMapper.readValue(dataObject.getData(), AvailabilityData.class);
 
+                            //set sender from UI to TravelBroker
                             dataObject.setSender(SendingInformation.TRAVELBROKER);
                             parsedMessage = objectMapper.writeValueAsBytes(dataObject);
+
+                            //check who to send the availability request
                             if (!availabilityData.isSendHotel()){
                                 DatagramPacket dgOutHotel = new DatagramPacket(parsedMessage, parsedMessage.length, Participant.localhost, Participant.hotelPort);
                                 dgSocket.send(dgOutHotel);
@@ -199,19 +259,21 @@ public class TravelBroker {
                             }
 
                         } else if (dataObject.getSender() == SendingInformation.RENTALCAR) {
+                            LOGGER.log(Level.INFO, "Availability: response RentalCar");
                             parsedMessage = objectMapper.writeValueAsBytes(dataObject);
-                            DatagramPacket dgOutUI = new DatagramPacket(parsedMessage, parsedMessage.length, Participant.localhost, Participant.uiPort);
+                            DatagramPacket dgOutUI = new DatagramPacket(parsedMessage, parsedMessage.length, Participant.localhost, uiPort);
                             dgSocket.send(dgOutUI);
                         } else if (dataObject.getSender() == SendingInformation.HOTEL) {
+                            LOGGER.log(Level.INFO, "Availability: response Hotel");
                             parsedMessage = objectMapper.writeValueAsBytes(dataObject);
-                            DatagramPacket dgOutUI = new DatagramPacket(parsedMessage, parsedMessage.length, Participant.localhost, Participant.uiPort);
+                            DatagramPacket dgOutUI = new DatagramPacket(parsedMessage, parsedMessage.length, Participant.localhost, uiPort);
                             dgSocket.send(dgOutUI);
                         }
                     }
                 }
 
             } catch (Exception e) {
-                System.out.println("tot, weil: " + e);
+                LOGGER.log(Level.SEVERE, "The Socket or the objectMapper threw an error", e);
             }
         }
     }
