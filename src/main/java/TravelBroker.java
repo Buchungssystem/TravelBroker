@@ -41,7 +41,7 @@ public class TravelBroker {
 
     public static void main(String[] args) {
 
-        ;
+
         int[] possiblePorts = {4442, 4443, 4444, 4445, 4446};
         boolean portSet = false;
         for (int i = 0; i < possiblePorts.length; i++){
@@ -398,6 +398,7 @@ public class TravelBroker {
                             if(currContext.isCarFlag()){
                                 //since Car is already received the LogFile gets deleted
                                 logWriter.delete(transactionId);
+                                transactionContextMap.remove(transaktionId);
                             }else{
                                 transactionContext = new TransactionContext(States.OK, false, true, currContext.getDecission());
                             }
@@ -407,6 +408,7 @@ public class TravelBroker {
                             if(currContext.isHotelFlag()){
                                 //since Hotel is already received the LogFile gets deleted
                                 logWriter.delete(transactionId);
+                                transactionContextMap.remove(transaktionId);
                             }else {
                                 transactionContext = new TransactionContext(States.OK, true, false, currContext.getDecission());
                             }

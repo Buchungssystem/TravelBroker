@@ -130,7 +130,6 @@ public class UI extends JFrame {
             int selectedCar = (int) carComboBox.getSelectedItem();
             int selectedRoom = (int) roomComboBox.getSelectedItem();
 
-            System.out.println(selectedRoom);
 
             //store data in wrapperclass to send it better
             BookingData bookingData = new BookingData(startDate, endDate, selectedCar, selectedRoom);
@@ -144,7 +143,7 @@ public class UI extends JFrame {
             dgSocket.send(dgOut);
 
             }catch (Exception ex){
-                System.out.println("alles am arsch: " + ex);
+                LOGGER.log(Level.SEVERE, "There was an error with sending the package", ex);
             }
 
         });
@@ -188,7 +187,6 @@ public class UI extends JFrame {
                 DatagramPacket dgOut = new DatagramPacket(parsedMessage, parsedMessage.length, Participant.localhost, travelBrokerPort);
 
                 dgSocket.send(dgOut);
-                System.out.println("send!");
 
                 byte[] buffer = new byte[65507];
                 DatagramPacket dgIn = new DatagramPacket(buffer, buffer.length);
@@ -204,16 +202,13 @@ public class UI extends JFrame {
 
                         if(dataObject.getSender() == SendingInformation.RENTALCAR){
                             ArrayList<Car> availableCars = objectMapper.readValue(data, new TypeReference<ArrayList<Car>>() {});
-                            System.out.println("Gut diese Karre: " + availableCars.get(0).getBrand());
                             carEnabled = true;
-                            System.out.println("is doch da: " + carEnabled);
                             carComboBox.removeAllItems();
                             for(int l = 0; l < availableCars.size(); l++)
                                 carComboBox.addItem(availableCars.get(l).getId());
                             carComboBox.setEnabled(true);
                         } else if (dataObject.getSender() == SendingInformation.HOTEL) {
                             ArrayList<Room> availableRooms = objectMapper.readValue(data,new TypeReference<ArrayList<Room>>() {});
-                            System.out.println("Da isser, der Raum: " + availableRooms.get(0).getId() + " " + availableRooms.get(0).getName());
                             roomEnabled = true;
                             roomComboBox.removeAllItems();
                             for(int n = 0; n < availableRooms.size(); n++)
@@ -244,12 +239,12 @@ public class UI extends JFrame {
                                 dgSocket.send(dgResend);
                             }
                         }else {
-                            System.out.println("Im UI anzeigen, dass Services wohl tot sind!");
+                            LOGGER.log(Level.SEVERE, "The services aren't responding to the availability");
                         }
                     }
                 }
             }catch(Exception e){
-                System.out.println(e);
+                LOGGER.log(Level.SEVERE, "An Exception occured", e);
             }
 
         } else {
