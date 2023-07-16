@@ -84,9 +84,11 @@ public class TravelBroker {
 
             //loop through context map and react accordingly
             for(Map.Entry<UUID, TransactionContext> entry : transactionContextMap.entrySet()){
+                //get transaction current context
+                TransactionContext currContext = entry.getValue();
+
                 switch(entry.getValue().getCurrentState()){
-                    case READY -> {
-                        TransactionContext currContext = entry.getValue();
+                    case GLOBALCOMMIT -> {
                         if(!currContext.isCarFlag()){
                             //send decision to Car since we couldn't send it before the crash
 
@@ -104,28 +106,101 @@ public class TravelBroker {
                                 logWriter.write(entry.getKey(), transactionContext);
                                 transactionContextMap.put(entry.getKey(), transactionContext);
                             }catch(Exception e){
-                                LOGGER.log(Level.SEVERE, "There was an error with sending the decision", e);
+                                LOGGER.log(Level.SEVERE, "There was an error with sending the decision - commit recovery", e);
                             }
                         } else if (!currContext.isHotelFlag()) {
                             //send decision to Hotel since we couldn't send it before the crash
-
                             UDPMessage hotelResponse = new UDPMessage(entry.getKey(), new byte[0], SendingInformation.TRAVELBROKER, Operations.COMMIT, myPort);
                             try {
                                 parsedResponse = objectMapper.writeValueAsBytes(hotelResponse);
-                                DatagramPacket dpHotel = new DatagramPacket(parsedResponse, parsedResponse.length, Participant.localhost, Participant.rentalCarPort);
+                                DatagramPacket dpHotel = new DatagramPacket(parsedResponse, parsedResponse.length, Participant.localhost, Participant.hotelPort);
 
                                 dgSocket.send(dpHotel);
                                 LOGGER.log(Level.INFO, "Send the decission Commit to Hotel");
 
-                                boolean hotelFlag = currContext.isHotelFlag();
+                                boolean carFlag = currContext.isCarFlag();
 
-                                transactionContext = new TransactionContext(States.READY, true, hotelFlag);
+                                transactionContext = new TransactionContext(States.READY, carFlag, true);
                                 logWriter.write(entry.getKey(), transactionContext);
                                 transactionContextMap.put(entry.getKey(), transactionContext);
                             }catch(Exception e){
-                                LOGGER.log(Level.SEVERE, "There was an error with sending the decision", e);
+                                LOGGER.log(Level.SEVERE, "There was an error with sending the decision - commit recovery", e);
                             }
                         }
+                    }
+                    case ABORT -> {
+                        if(!currContext.isCarFlag()){
+                            //send decision to Car since we couldn't send it before the crash
+                            UDPMessage carResponse = new UDPMessage(entry.getKey(), new byte[0], SendingInformation.TRAVELBROKER, Operations.ABORT, myPort);
+                            try {
+                                parsedResponse = objectMapper.writeValueAsBytes(carResponse);
+                                DatagramPacket dpCar = new DatagramPacket(parsedResponse, parsedResponse.length, Participant.localhost, Participant.rentalCarPort);
+
+                                dgSocket.send(dpCar);
+                                LOGGER.log(Level.INFO, "Send the decission Abort to RentalCar");
+
+                                boolean hotelFlag = currContext.isHotelFlag();
+
+                                transactionContext = new TransactionContext(States.ABORT, true, hotelFlag);
+                                logWriter.write(entry.getKey(), transactionContext);
+                                transactionContextMap.put(entry.getKey(), transactionContext);
+                            }catch(Exception e){
+                                LOGGER.log(Level.SEVERE, "There was an error with sending the decision - abort recovery", e);
+                            }
+                        } else if (!currContext.isHotelFlag()) {
+                            //send decision to Hotel since we couldn't send it before the crash
+                            UDPMessage hotelResponse = new UDPMessage(entry.getKey(), new byte[0], SendingInformation.TRAVELBROKER, Operations.ABORT, myPort);
+                            try {
+                                parsedResponse = objectMapper.writeValueAsBytes(hotelResponse);
+                                DatagramPacket dpHotel = new DatagramPacket(parsedResponse, parsedResponse.length, Participant.localhost, Participant.hotelPort);
+
+                                dgSocket.send(dpHotel);
+                                LOGGER.log(Level.INFO, "Send the decission Abort to Hotel");
+
+                                boolean carFlag = currContext.isCarFlag();
+
+                                transactionContext = new TransactionContext(States.READY, carFlag, true);
+                                logWriter.write(entry.getKey(), transactionContext);
+                                transactionContextMap.put(entry.getKey(), transactionContext);
+                            }catch(Exception e){
+                                LOGGER.log(Level.SEVERE, "There was an error with sending the decision - Abort recovery", e);
+                            }
+                        }
+                    }
+                    case READY -> {
+                        //if the state is still ready that means we didn't receive the ready response from one or both of our participants
+                        //otherwise it would be set to globalCommit
+                        //so we send a abort to both
+
+                        UDPMessage abortMessage = new UDPMessage(entry.getKey(), new byte[0], SendingInformation.TRAVELBROKER, Operations.ABORT, myPort);
+                        try {
+                            parsedResponse = objectMapper.writeValueAsBytes(abortMessage);
+                            DatagramPacket dpHotel = new DatagramPacket(parsedResponse, parsedResponse.length, Participant.localhost, Participant.hotelPort);
+                            DatagramPacket dpCar = new DatagramPacket(parsedResponse, parsedResponse.length, Participant.localhost, Participant.rentalCarPort);
+
+                            dgSocket.send(dpHotel);
+                            dgSocket.send(dpCar);
+                        }catch (Exception e){
+                            LOGGER.log(Level.SEVERE, "There was an error with sending the decision - Ready recovery");
+                        }
+
+                    }
+                    case PREPARE -> {
+                        //if the state is prepare we send an abort to both participants
+                        UDPMessage abortMessage = new UDPMessage(entry.getKey(), new byte[0], SendingInformation.TRAVELBROKER, Operations.ABORT, myPort);
+                        try {
+                            parsedResponse = objectMapper.writeValueAsBytes(abortMessage);
+                            DatagramPacket dpHotel = new DatagramPacket(parsedResponse, parsedResponse.length, Participant.localhost, Participant.hotelPort);
+                            DatagramPacket dpCar = new DatagramPacket(parsedResponse, parsedResponse.length, Participant.localhost, Participant.rentalCarPort);
+
+                            dgSocket.send(dpHotel);
+                            dgSocket.send(dpCar);
+                        }catch (Exception e){
+                            LOGGER.log(Level.SEVERE, "There was an error with sending the decision - Prepare recovery");
+                        }
+                    }
+                    case OK -> {
+
                     }
                 }
             }
